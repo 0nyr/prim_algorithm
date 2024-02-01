@@ -9,7 +9,7 @@ use petgraph::algo::min_spanning_tree;
 use petgraph::visit::EdgeRef;
 use image::RgbImage;
 use imageproc::drawing;
-use svg::node::element::{Circle, Line};
+use svg::node::element::{Circle, Line, Text};
 use svg::Document;
 
 pub struct FullyConnectedGraph {
@@ -71,6 +71,10 @@ impl FullyConnectedGraph {
             }
             file.write_all(b"\n").unwrap();
         }
+
+        // save mst cost
+        let mst_cost = self.compute_mst_cost();
+        file.write_all(format!("{}\n", mst_cost).as_bytes()).unwrap();
     }
 
     fn get_mst(&self) -> Graph<(), u32, Undirected>  {
@@ -96,6 +100,15 @@ impl FullyConnectedGraph {
             UnGraph::from_edges(mst_edges)
         };
         return mst;
+    }
+
+    fn compute_mst_cost(&self) -> u32 {
+        let mst = self.get_mst();
+        let mut mst_cost = 0;
+        for edge in mst.edge_references() {
+            mst_cost += *edge.weight();
+        }
+        return mst_cost;
     }
 
     pub fn generate_mst_png_image(&self, filepath: &str) {
@@ -138,18 +151,20 @@ impl FullyConnectedGraph {
     pub fn generate_mst_svg_image(&self, filepath: &str) {
         let mst = self.get_mst();
 
-        let scaling_factor: i32 = 10;
+        let scaling_factor: i32 = 20;
+        let node_radius: i32 = 8;
+
         let mut document = Document::new()
-            .set("width", self.nb_nodes * scaling_factor as usize + 20)
-            .set("height", self.nb_nodes * scaling_factor as usize + 20);
+            .set("width", self.nb_nodes * scaling_factor as usize + 40)
+            .set("height", self.nb_nodes * scaling_factor as usize + 40);
 
         for edge in mst.edge_references() {
             let (source, target) = (edge.source().index(), edge.target().index());
             let (source_x, source_y) = self.coordinates[source];
             let (target_x, target_y) = self.coordinates[target];
 
-            let source_pos = (source_x as i32 * scaling_factor + 10, source_y as i32 * scaling_factor + 10);
-            let target_pos = (target_x as i32 * scaling_factor + 10, target_y as i32 * scaling_factor + 10);
+            let source_pos = (source_x as i32 * scaling_factor + 20, source_y as i32 * scaling_factor + 20);
+            let target_pos = (target_x as i32 * scaling_factor + 20, target_y as i32 * scaling_factor + 20);
 
             // Draw line for the edge
             let line = Line::new()
@@ -161,21 +176,38 @@ impl FullyConnectedGraph {
 
             document = document.add(line);
 
-            // Draw source node
-            let source_circle = Circle::new()
-                .set("cx", source_pos.0)
-                .set("cy", source_pos.1)
-                .set("r", 3)
-                .set("fill", "red");
+            // Draw edge weight next to the center of the edge
+            let text = Text::new()
+                .set("x", ((source_pos.0 + target_pos.0) / 2) + 5)
+                .set("y", ((source_pos.1 + target_pos.1) / 2) + 5)
+                .set("font-size", 10)
+                .set("font-family", "Arial")
+                .set("fill", "grey")
+                .add(svg::node::Text::new(format!("{}", edge.weight())));
+            document = document.add(text);
+        }
 
-            // Draw target node
-            let target_circle = Circle::new()
-                .set("cx", target_pos.0)
-                .set("cy", target_pos.1)
-                .set("r", 3)
-                .set("fill", "red");
+        // Draw nodes and indices after to ensure they are on top
+        for (index, &(x, y)) in self.coordinates.iter().enumerate() {
+            let pos = (x as i32 * scaling_factor + 20, y as i32 * scaling_factor + 20);
 
-            document = document.add(source_circle).add(target_circle);
+            // Draw node
+            let circle = Circle::new()
+                .set("cx", pos.0)
+                .set("cy", pos.1)
+                .set("r", node_radius)
+                .set("fill", "red");
+            document = document.add(circle);
+
+            // Display node index
+            let text = Text::new()
+                .set("x", pos.0 - (node_radius / 2)) // Slightly offset the text from the node
+                .set("y", pos.1 + (node_radius / 2))
+                .set("font-size", 10)
+                .set("font-family", "Arial")
+                .set("fill", "orange")
+                .add(svg::node::Text::new(format!("{}", index)));
+            document = document.add(text);
         }
 
         svg::save(filepath, &document).unwrap();
