@@ -11,15 +11,45 @@ use image::RgbImage;
 use imageproc::drawing;
 use svg::node::element::{Circle, Line, Text};
 use svg::Document;
+use clap::Parser;
+
+/// Graph generation and embedding program
+/// NOTE : to add multiple files/folders duplicate the flags before the files/folders, 
+/// like : cargo run -- -f /path/to/file1 -f /path/to/file2
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+pub struct Argv {
+    /// Number of nodes in the graph
+    #[arg(short, long, default_value_t = 10)]
+    pub nb_nodes: usize,
+    /// Number of nodes to exclude (so the MST will be partial only)
+    #[arg(short = 'e', long, default_value_t = 0)]
+    pub nb_nodes_to_exclude: usize,
+}
+
+pub fn get_program_args() -> Argv {
+    let args = Argv::parse();
+
+    // check that the number of nodes is greater than the number of nodes to exclude
+    if args.nb_nodes < args.nb_nodes_to_exclude {
+        panic!("The number of nodes to exclude must be less than the number of nodes");
+    }
+
+    return args;
+}
 
 pub struct FullyConnectedGraph {
     pub nb_nodes: usize,
     pub cost: Vec<Vec<u32>>, // index is node index
     pub coordinates: Vec<(u32, u32)>, // index is node index
+    pub nb_excluded_nodes_from_mst: usize, // number of nodes to exclude from the MST (0 means complete MST)
 }
 
 impl FullyConnectedGraph {
-    pub fn generate_random_graph(nb_nodes: usize) -> FullyConnectedGraph {
+    pub fn generate_random_graph(
+        nb_nodes: usize,
+        nb_excluded_nodes_from_mst: usize,
+    ) -> FullyConnectedGraph {
         let mut cost = vec![vec![0; nb_nodes]; nb_nodes];
         let mut coordinates = vec![(0, 0); nb_nodes];
         let mut coordinates_to_node_index: HashMap<(u32, u32), usize> = HashMap::new();
@@ -55,6 +85,7 @@ impl FullyConnectedGraph {
             nb_nodes,
             cost,
             coordinates,
+            nb_excluded_nodes_from_mst,
         }
     }
 
@@ -72,21 +103,37 @@ impl FullyConnectedGraph {
             file.write_all(b"\n").unwrap();
         }
 
+        // save number of nodes to exclude from the MST
+        file.write_all(format!("{}\n", self.nb_excluded_nodes_from_mst).as_bytes()).unwrap();
+
         // save mst cost
         let mst_cost = self.compute_mst_cost();
         file.write_all(format!("{}\n", mst_cost).as_bytes()).unwrap();
     }
 
     fn get_mst(&self) -> Graph<(), u32, Undirected>  {
-        let graph = UnGraph::<(), u32>::from_edges(self.coordinates.iter().enumerate().flat_map(|(i, _)| {
-            self.coordinates.iter().enumerate().filter_map(move |(j, _)| {
+        // WARN: nxgraph is 0-indexed
+        // so we can only remove the last nodes from the base graph
+
+        // only consider the edges that are part of the MST
+        let mut edges_to_include = vec![];
+        let nb_included_nodes = self.nb_nodes - self.nb_excluded_nodes_from_mst;
+        for i in 0..nb_included_nodes {
+            for j in 0..nb_included_nodes {
                 if i < j {
-                    Some((NodeIndex::new(i), NodeIndex::new(j), self.cost[i][j]))
-                } else {
-                    None
+                    edges_to_include.push(
+                        (NodeIndex::new(i), NodeIndex::new(j), self.cost[i][j])
+                    );
                 }
-            })
-        }));
+            }
+        }
+
+        // create a nxgraph 
+        let graph = UnGraph::<usize, u32>::from_edges(edges_to_include);
+        assert!(graph.node_count() == self.nb_nodes - self.nb_excluded_nodes_from_mst, 
+            "🔴 Graph node count: {}, expected: {}", 
+            graph.node_count(), self.nb_nodes - self.nb_excluded_nodes_from_mst
+        );
 
         let mst_iter = min_spanning_tree(&graph);
         let mst: UnGraph<(), u32> = {
@@ -99,6 +146,7 @@ impl FullyConnectedGraph {
             }).collect();
             UnGraph::from_edges(mst_edges)
         };
+
         return mst;
     }
 
@@ -118,8 +166,10 @@ impl FullyConnectedGraph {
         let mut imgbuf = RgbImage::new((scaling_factor as usize * self.nb_nodes + 20) as u32, (10 * self.nb_nodes + 20) as u32);
         
         let node_color = image::Rgb([255, 0, 0]);
+        let excluded_node_color = image::Rgb([255, 255, 0]);
         let edge_color = image::Rgb([255, 255, 255]);
-
+        
+        // Draw the MST edges and nodes
         for edge in mst.edge_references() {
             let (source, target) = (edge.source().index(), edge.target().index());
             let (source_x, source_y): (i32, i32) = {
@@ -145,6 +195,16 @@ impl FullyConnectedGraph {
             drawing::draw_filled_circle_mut(&mut imgbuf, target_circle_coordinates, 3, node_color);
         }
 
+        // Draw the remaining nodes if needed
+        if self.nb_excluded_nodes_from_mst > 0 {
+            let nb_included_nodes = self.nb_nodes - self.nb_excluded_nodes_from_mst;
+            for i in nb_included_nodes..self.nb_nodes {
+                let (x, y) = self.coordinates[i];
+                let circle_coordinates = (x as i32 * scaling_factor + 10, y as i32 * scaling_factor + 10);
+                drawing::draw_filled_circle_mut(&mut imgbuf, circle_coordinates, 3, excluded_node_color);
+            }
+        }
+
         imgbuf.save(filepath).unwrap();
     }
 
@@ -158,6 +218,7 @@ impl FullyConnectedGraph {
             .set("width", self.nb_nodes * scaling_factor as usize + 40)
             .set("height", self.nb_nodes * scaling_factor as usize + 40);
 
+        // Draw the MST edges
         for edge in mst.edge_references() {
             let (source, target) = (edge.source().index(), edge.target().index());
             let (source_x, source_y) = self.coordinates[source];
@@ -187,8 +248,9 @@ impl FullyConnectedGraph {
             document = document.add(text);
         }
 
-        // Draw nodes and indices after to ensure they are on top
-        for (index, &(x, y)) in self.coordinates.iter().enumerate() {
+        // Draw MST nodes
+        for node in mst.node_indices() {
+            let (x, y) = self.coordinates[node.index()];
             let pos = (x as i32 * scaling_factor + 20, y as i32 * scaling_factor + 20);
 
             // Draw node
@@ -205,9 +267,36 @@ impl FullyConnectedGraph {
                 .set("y", pos.1 + (node_radius / 2))
                 .set("font-size", 10)
                 .set("font-family", "Arial")
-                .set("fill", "orange")
-                .add(svg::node::Text::new(format!("{}", index)));
+                .set("fill", "white")
+                .add(svg::node::Text::new(format!("{}", node.index())));
             document = document.add(text);
+        }
+
+        // add missing nodes if needed
+        if self.nb_excluded_nodes_from_mst > 0 {
+            let nb_included_nodes = self.nb_nodes - self.nb_excluded_nodes_from_mst;
+            for i in nb_included_nodes..self.nb_nodes {
+                let (x, y) = self.coordinates[i];
+                let pos = (x as i32 * scaling_factor + 20, y as i32 * scaling_factor + 20);
+
+                // Draw node
+                let circle = Circle::new()
+                    .set("cx", pos.0)
+                    .set("cy", pos.1)
+                    .set("r", node_radius)
+                    .set("fill", "yellow");
+                document = document.add(circle);
+
+                // Display node index
+                let text = Text::new()
+                    .set("x", pos.0 - (node_radius / 2)) // Slightly offset the text from the node
+                    .set("y", pos.1 + (node_radius / 2))
+                    .set("font-size", 10)
+                    .set("font-family", "Arial")
+                    .set("fill", "red")
+                    .add(svg::node::Text::new(format!("{}", i)));
+                document = document.add(text);
+            }
         }
 
         svg::save(filepath, &document).unwrap();
@@ -215,16 +304,40 @@ impl FullyConnectedGraph {
 }
 
 fn main() {
-    let dir_path = "generated";
+    // program argument: number of nodes
+    let args = get_program_args();
+
+    // file related variables
+    let dir_path = {
+        if args.nb_nodes_to_exclude > 0 {
+            "generated/partial_mst".to_string()
+        } else {
+            "generated/complete_mst".to_string()
+        }
+    };
+    let filename_prefix = {
+        if args.nb_nodes_to_exclude > 0 {
+            "fully_connected_graph_partial_mst_".to_string()
+        } else {
+            "fully_connected_graph_complete_mst".to_string()
+        }
+    };
     let timestamp = chrono::Utc::now().format("%Y-%m-%d-%H-%M-%S").to_string();
+    let filepath_base = format!("{}/{}_{}", dir_path, filename_prefix, timestamp);
 
-    let graph = FullyConnectedGraph::generate_random_graph(10);
-    let output_filepath = format!("{}/fully_connected_graph_{}.txt", dir_path, timestamp);
+    // generations
+    let graph = FullyConnectedGraph::generate_random_graph(
+        args.nb_nodes, args.nb_nodes_to_exclude
+    );
+    let output_filepath = format!("{}.txt", filepath_base);
     graph.save_to_file(&output_filepath);
+    print!("📋 Graph as text saved to file: {}\n", output_filepath);
 
-    let output_image_filepath = format!("{}/fully_connected_graph_{}.png", dir_path, timestamp);
-    graph.generate_mst_png_image(&output_image_filepath);
+    let output_filepath = format!("{}.png", filepath_base);
+    graph.generate_mst_png_image(&output_filepath);
+    print!("📋 Graph PNG saved to file: {}\n", output_filepath);
 
-    let output_filepath = format!("{}/fully_connected_graph_{}.svg", dir_path, timestamp);
+    let output_filepath = format!("{}.svg", filepath_base);
     graph.generate_mst_svg_image(&output_filepath);
+    print!("📋 Graph SVG saved to file: {}\n", output_filepath);
 }
