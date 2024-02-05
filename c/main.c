@@ -65,7 +65,7 @@ int costPrimMST(
     // It doesn't get detected by the tests since the test are on 
     // all base graph nodes.
     for (int i = 1; i < nbVertices; i++) {
-        sum += minCostfrom[i];
+        sum += minCostfrom[vertices[i]];
     }
 
     free(isVisited);
@@ -169,6 +169,8 @@ void run_prim_cost_test_on_partial_mst() {
     test_mst_cost("generated/partial_mst/fully_connected_graph_partial_mst__2024-02-02-11-28-22.txt");
     test_mst_cost("generated/partial_mst/fully_connected_graph_partial_mst__2024-02-02-11-29-56.txt");
     test_mst_cost("generated/partial_mst/fully_connected_graph_partial_mst__2024-02-02-11-30-03.txt");
+    test_mst_cost("generated/partial_mst/fully_connected_graph_partial_mst__2024-02-05-16-26-57.txt");
+    test_mst_cost("generated/partial_mst/fully_connected_graph_partial_mst__2024-02-05-16-33-00.txt");
 }
 
 int main() {
