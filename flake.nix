@@ -24,6 +24,11 @@
             pkgs.rustfmt
 
             pkgs.graphviz
+
+            # c 
+            pkgs.gcc
+            pkgs.gnumake
+            pkgs.gdb
           ];
 
           RUST_BACKTRACE = "1";
