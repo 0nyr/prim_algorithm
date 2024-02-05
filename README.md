@@ -2,6 +2,8 @@
 
 This repository offers a streamlined implementation of Prim's algorithm for calculating the MST cost in fully connected graphs, supported by a Rust program for generating comprehensive test cases. This combination ensures a robust evaluation of the algorithm's performance under various conditions, demonstrating the practical application of theoretical computer science principles to a specific class of graph problems.
 
+![A graph with partial MST](./generated/partial_mst/fully_connected_graph_partial_mst__2024-02-02-11-29-56.svg)
+
 ### Content
 
 This repository is divided into two main components:
